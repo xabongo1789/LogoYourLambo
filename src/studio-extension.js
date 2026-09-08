@@ -5,6 +5,19 @@ const baseUpdate=update,baseBlocked=isBlocked,basePanelPoint=panelPoint;
 function inventoryUpdate(fn){const before=applyingInventory;applyingInventory=true;try{return fn();}finally{applyingInventory=before;}}
 function surfaceUnavailable(p){return !!stlPanels&&!stlAPI.fitsPanel(stlPanels[p.zoneId],p);}
 function loadModule(path){return import(new URL(path,document.baseURI).href);}
+function decodeStandaloneSTL(){
+ const data=document.getElementById('huracan-stl-data'),profile=document.getElementById('huracan-model-profile');
+ if(!data||!profile||!window.HURACAN_STL_API||!window.HURACAN_STL_WORKER_SOURCE)throw new Error('Le HTML local ne contient pas le STL autonome. Relancez npm run build.');
+ const encoded=data.textContent.trim();if(!encoded)throw new Error('Le STL embarqué est vide.');
+ const binary=atob(encoded),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+ return {buffer:bytes.buffer,profile:JSON.parse(profile.textContent),api:window.HURACAN_STL_API,workerSource:window.HURACAN_STL_WORKER_SOURCE};
+}
+function createSTLWorker(source){
+ if(!source)return new Worker(new URL('assets/stl-worker.mjs',document.baseURI),{type:'module'});
+ const objectURL=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));
+ try{const worker=new Worker(objectURL);worker.huracanObjectURL=objectURL;return worker;}catch(error){URL.revokeObjectURL(objectURL);throw error;}
+}
+function disposeSTLWorker(worker){if(!worker)return;worker.terminate();if(worker.huracanObjectURL)URL.revokeObjectURL(worker.huracanObjectURL);}
 panelPoint=function(z,u,v,offset=.009){const p=stlAPI?.samplePanel(stlPanels?.[z.id],u,v);return p?V.add(p,V.mul(V.norm(V.cross(z.right,z.up)),Math.max(0,offset-.009))):basePanelPoint(z,u,v,offset);};
 isBlocked=function(p){return baseBlocked(p)||surfaceUnavailable(p);};
 update=function(){
@@ -20,17 +33,21 @@ update=function(){
 const baseLoad=CarViewer.prototype.load;
 CarViewer.prototype.load=async function(url){
  if(typeof url!=='string'||!url.toLowerCase().endsWith('.stl'))return baseLoad.call(this,url);
- if(location.protocol==='file:')throw new Error('Servez le studio via npm run dev, pas en double-cliquant le fichier.');
- const [response,api,profileResponse]=await Promise.all([fetch(new URL(url,document.baseURI)),loadModule('assets/stl.mjs'),fetch(new URL('model-profile.json',document.baseURI))]);
- if(!response.ok||!profileResponse.ok)throw new Error('Fichier STL ou profil de calibration indisponible.');
- const buffer=await response.arrayBuffer(),profile=await profileResponse.json();stlAPI=api;
- $('loading').lastElementChild.textContent='Préparation du STL et des surfaces…';
+ let buffer,api,profile,workerSource=null;
+ if(window.HURACAN_STANDALONE){({buffer,api,profile,workerSource}=decodeStandaloneSTL());}
+ else{
+  if(location.protocol==='file:')throw new Error('Ce fichier est le template source. Exécutez npm run build puis ouvrez HURACAN-500-v2.local.html.');
+  const [response,module,profileResponse]=await Promise.all([fetch(new URL(url,document.baseURI)),loadModule('assets/stl.mjs'),fetch(new URL('model-profile.json',document.baseURI))]);
+  if(!response.ok||!profileResponse.ok)throw new Error('Fichier STL ou profil de calibration indisponible.');
+  buffer=await response.arrayBuffer();profile=await profileResponse.json();api=module;
+ }
+ stlAPI=api;$('loading').lastElementChild.textContent='Préparation du STL et des surfaces…';
  for(const z of ZONES)if(profile.zones?.[z.id])Object.assign(z,profile.zones[z.id]);
  const zones=ZONES.map(z=>({id:z.id,center:[...z.center],right:[...z.right],up:[...z.up],size:[...z.size]}));
  const result=await new Promise((resolve,reject)=>{
-  const worker=new Worker(new URL('assets/stl-worker.mjs',document.baseURI),{type:'module'});this.stlWorker=worker;
-  const timer=setTimeout(()=>{worker.terminate();reject(new Error('Le traitement du STL a expiré.'));},120000);
-  const done=()=>{clearTimeout(timer);worker.terminate();this.stlWorker=null;};
+  const worker=createSTLWorker(workerSource);this.stlWorker=worker;
+  const timer=setTimeout(()=>{disposeSTLWorker(worker);this.stlWorker=null;reject(new Error('Le traitement du STL a expiré.'));},120000);
+  const done=()=>{clearTimeout(timer);disposeSTLWorker(worker);this.stlWorker=null;};
   worker.onmessage=({data})=>{done();data.error?reject(new Error(data.error)):resolve(data);};
   worker.onerror=()=>{done();reject(new Error('Impossible de démarrer le worker STL.'));};
   worker.postMessage({buffer,profile,zones,software:this.software},[buffer]);
@@ -53,7 +70,7 @@ CarViewer.prototype.load=async function(url){
  });
  for(const z of ZONES){const center=api.samplePanel(stlPanels[z.id],.5,.5);if(center)z.center=center;}
  this.draftKey=null;this.dirty=true;
- document.querySelector('.model-note').textContent='STL du dépôt · carrosserie blanche · vitres grises';
+ document.querySelector('.model-note').textContent=window.HURACAN_STANDALONE?'STL du dépôt · mode local autonome':'STL du dépôt · carrosserie blanche · vitres grises';
  if(this.software)toast('Aperçu logiciel allégé. Les positions utilisent le maillage STL complet.');
  this.callbacks.onReady?.();this.rebuildDecals();
 };
@@ -103,4 +120,4 @@ CarViewer.prototype.rebuildDecals=async function(){
  this.decals.forEach(m=>this.disposeMesh(m));this.decals=built;this.dirty=true;
 };
 const baseDestroy=CarViewer.prototype.destroy;
-CarViewer.prototype.destroy=function(){this.stlWorker?.terminate();this.decalVersion=(this.decalVersion||0)+1;return baseDestroy.call(this);};
+CarViewer.prototype.destroy=function(){disposeSTLWorker(this.stlWorker);this.stlWorker=null;this.decalVersion=(this.decalVersion||0)+1;return baseDestroy.call(this);};
