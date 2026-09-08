@@ -8,12 +8,24 @@ Node.js 20 minimum. Aucune dépendance npm à installer pour le build et les tes
 
 ```sh
 npm run check
+npm run build
+```
+
+### Ouverture locale par double-clic, sans serveur
+
+Après `npm run build`, ouvrir directement **`HURACAN-500-v2.local.html`** à la racine du dépôt. Ce fichier autonome embarque le vrai `lambo+H.stl`, `model-profile.json`, les fonctions de projection et le code du worker. Le worker est créé depuis un `Blob`, donc le rendu du STL fonctionne en `file://` sans `fetch` vers un fichier local.
+
+Ne pas ouvrir `HURACAN-500-v2.html` directement : ce fichier reste le **template source** du build et contient encore le modèle d'amorçage historique qui est retiré lors de la compilation. Le fichier `.local.html` est généré et ignoré par Git.
+
+Le mode local autonome vise la prévisualisation 3D. Pour Supabase, l'authentification, Realtime et les positions partagées, utiliser le mode HTTP :
+
+```sh
 npm run dev
 ```
 
-Ouvrir `http://127.0.0.1:8000`. Sans configuration Supabase, la 3D fonctionne en mode local et aucune sauvegarde partagée n'est annoncée comme réussie.
+Puis ouvrir `http://127.0.0.1:8000`. Sans configuration Supabase, la 3D fonctionne en mode local et aucune sauvegarde partagée n'est annoncée comme réussie.
 
-**Publier le dossier `dist/`, pas le HTML source.** `HURACAN-500-v2.html` est conservé comme template. Le build retire le GLB embarqué et injecte les extensions avant l'initialisation du studio. Il produit `dist/index.html` et `dist/HURACAN-500-v2.html`, accompagnés du STL, du profil et des modules. Le build refuse les changements incompatibles du template. Le double-clic `file://` ne fonctionne pas : utiliser HTTP.
+**Publier le dossier `dist/`, pas le HTML source ni `HURACAN-500-v2.local.html`.** Le build retire le GLB embarqué et injecte les extensions avant l'initialisation du studio. Il produit `dist/index.html` et `dist/HURACAN-500-v2.html`, accompagnés du STL, du profil et des modules pour le mode HTTP, ainsi que le fichier autonome local à la racine. Le build refuse les changements incompatibles du template.
 
 ## Configuration Supabase
 
@@ -67,6 +79,6 @@ npm run build
 node scripts/verify-model.mjs
 ```
 
-Les tests Node couvrent STL binaire/ASCII, fichiers invalides, orientation, vitrage, projection, trous, collisions, rotations, interactions, révisions et secrets. La vérification du vrai STL compte les matériaux et les surfaces disponibles. Le workflow GitHub teste aussi la migration, les droits et deux écritures concurrentes dans **PostgreSQL 16 isolé**, avec des schémas Auth/Storage de test. Cela ne remplace pas un essai des emails Auth, du SDK, du stockage HTTP et de Realtime sur le vrai projet Supabase.
+Les tests Node couvrent STL binaire/ASCII, fichiers invalides, orientation, vitrage, projection, trous, collisions, rotations, interactions, révisions, secrets et génération du HTML autonome `file://`. La vérification du vrai STL compte les matériaux et les surfaces disponibles. Le workflow GitHub teste aussi la migration, les droits et deux écritures concurrentes dans **PostgreSQL 16 isolé**, avec des schémas Auth/Storage de test. Cela ne remplace pas un essai des emails Auth, du SDK, du stockage HTTP et de Realtime sur le vrai projet Supabase.
 
 La CI fournit `dist/` en artefact. Elle ne déploie pas le site et ne touche pas à une base distante. Avant lancement, vérifier dans deux sessions navigateur : sauvegarde/rechargement de deux marques, collision simultanée, restauration/suppression par propriétaire, panne réseau, cinq vues de la voiture, puis conditions commerciales et politique de conservation.
