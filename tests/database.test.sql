@@ -1,0 +1,24 @@
+-- Integration test against tests/database-fixture.sql, not a remote project.
+insert into auth.users(id,email,email_confirmed_at) select ('00000000-0000-0000-0000-00000000000'||i)::uuid,'company'||i||'@example.test',now() from generate_series(1,4) i;
+insert into storage.objects(bucket_id,name) select 'company-logos','00000000-0000-0000-0000-00000000000'||i||'/10000000-0000-0000-0000-00000000000'||i||'.png' from generate_series(1,4) i;
+set role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false);
+select public.save_logo_placement('huracan-stl-v1','One','00000000-0000-0000-0000-000000000001/10000000-0000-0000-0000-000000000001.png','hood',0,0,4,2,0,0);
+select tests.assert((select amount_cents=400000 from public.logo_placements where brand='One'),'server-computed price');
+select tests.expect_error($$update public.logo_placements set payment_status='paid'$$,'42501');
+select tests.expect_error($$select public.save_logo_placement('huracan-stl-v1','One','00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png','hood',0,0,4,2,0,1)$$,'42501');
+select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+select tests.expect_error($$select public.save_logo_placement('huracan-stl-v1','Two','00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png','hood',3,0,4,2,0,0)$$,'23P01');
+select public.save_logo_placement('huracan-stl-v1','Two','00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png','hood',4,0,4,2,0,0);
+select tests.expect_error($$select public.delete_logo_placement((select id from public.logo_placements where brand='One'),1)$$,'42501');
+select tests.expect_error($$select public.save_logo_placement('huracan-stl-v1','Two','00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png','hood',4,0,4,2,0,0)$$,'40001');
+select tests.expect_error($$select public.save_logo_placement('huracan-stl-v1','Two','00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png','hood',19,0,4,2,0,1)$$,'23514');
+select public.save_logo_placement('huracan-stl-v1','Two','00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png','door-left',0,0,4,2,90,1);
+select tests.assert((select revision=2 and rotation=90 from public.logo_placements where brand='Two'),'revision increments and rotation persists');
+delete from storage.objects where name='00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png';
+select tests.assert(exists(select 1 from storage.objects where name='00000000-0000-0000-0000-000000000002/10000000-0000-0000-0000-000000000002.png'),'referenced image cannot be deleted');
+reset role;
+set role anon;
+select tests.assert(jsonb_array_length(public.list_logo_placements('huracan-stl-v1'))=2,'public reads include both companies');
+select tests.expect_error($$select public.save_logo_placement('huracan-stl-v1','Anonymous','','hood',0,0,1,1,0,0)$$,'42501');
+reset role;
