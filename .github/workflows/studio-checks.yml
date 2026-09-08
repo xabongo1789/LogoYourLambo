@@ -1,0 +1,45 @@
+name: Studio checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: studio_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci-only-password
+      PGDATABASE: studio_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run check
+      - run: npm run build
+      - run: node scripts/verify-model.mjs
+      - name: Test migration and authorization in isolated PostgreSQL
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f tests/database-fixture.sql
+          psql -X -v ON_ERROR_STOP=1 -f supabase/migrations/202609080001_shared_logo_placements.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/database.test.sql
+          bash tests/concurrency.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huracan-stl-studio
+          path: dist/
+          retention-days: 7
